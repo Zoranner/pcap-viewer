@@ -1,12 +1,15 @@
 //! 十六进制查看器
 
+use chrono::DateTime;
 use colored::*;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 
 use crate::app::error::types::Result;
 use crate::cli::args::CliArgs;
 use crate::core::input::keyboard::KeyboardHandler;
-use crate::core::pcap::parser::{DataPacket, PcapParser};
+use crate::core::pcap::parser::{
+    DataPacket, PcapFileHeader, PcapParser,
+};
 use crate::core::viewer::pagination::PaginationState;
 use crate::core::viewer::terminal::TerminalManager;
 
@@ -100,51 +103,62 @@ impl HexViewer {
             }
 
             // 等待用户输入
-            if let Event::Key(KeyEvent {
-                code,
-                modifiers,
-                ..
-            }) = event::read()?
-            {
-                // 使用键盘处理器进行防抖
-                if !self
-                    .keyboard_handler
-                    .should_process_key(&code)
-                {
+            match event::read()? {
+                Event::Key(KeyEvent {
+                    code,
+                    modifiers,
+                    ..
+                }) => {
+                    // 使用键盘处理器进行防抖
+                    if !self
+                        .keyboard_handler
+                        .should_process_key(&code)
+                    {
+                        continue;
+                    }
+
+                    match (code, modifiers) {
+                        (KeyCode::Esc, _)
+                        | (KeyCode::Char('q'), _) => {
+                            break;
+                        }
+                        (KeyCode::Up, _) => {
+                            self.pagination.scroll_up();
+                        }
+                        (KeyCode::Down, _) => {
+                            self.pagination.scroll_down();
+                        }
+                        (KeyCode::Left, _) => {
+                            self.pagination.page_up();
+                        }
+                        (KeyCode::Right, _) => {
+                            self.pagination.page_down();
+                        }
+                        (KeyCode::Home, _) => {
+                            self.pagination
+                                .go_to_first_page();
+                        }
+                        (KeyCode::End, _) => {
+                            self.pagination
+                                .go_to_last_page();
+                        }
+                        (KeyCode::Char('r'), _) => {
+                            // 刷新终端尺寸，强制重绘
+                            let _ = self
+                                .update_terminal_size()?;
+                            self.last_display_start_line =
+                                usize::MAX; // 强制重绘
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Mouse(_) => {
+                    // 忽略所有鼠标事件（包括滚轮滚动）
                     continue;
                 }
-
-                match (code, modifiers) {
-                    (KeyCode::Esc, _)
-                    | (KeyCode::Char('q'), _) => {
-                        break;
-                    }
-                    (KeyCode::Up, _) => {
-                        self.pagination.scroll_up();
-                    }
-                    (KeyCode::Down, _) => {
-                        self.pagination.scroll_down();
-                    }
-                    (KeyCode::Left, _) => {
-                        self.pagination.page_up();
-                    }
-                    (KeyCode::Right, _) => {
-                        self.pagination.page_down();
-                    }
-                    (KeyCode::Home, _) => {
-                        self.pagination.go_to_first_page();
-                    }
-                    (KeyCode::End, _) => {
-                        self.pagination.go_to_last_page();
-                    }
-                    (KeyCode::Char('r'), _) => {
-                        // 刷新终端尺寸，强制重绘
-                        let _ =
-                            self.update_terminal_size()?;
-                        self.last_display_start_line =
-                            usize::MAX; // 强制重绘
-                    }
-                    _ => {}
+                _ => {
+                    // 忽略其他事件
+                    continue;
                 }
             }
         }
@@ -232,7 +246,7 @@ impl HexViewer {
         let total_pages = self.pagination.total_pages();
 
         println!();
-        println!("{}", "=".repeat(80).bright_blue());
+        println!("{}", "=".repeat(80));
         println!(
             "{}",
             format!(
@@ -242,10 +256,11 @@ impl HexViewer {
                 current_page,
                 total_pages
             )
-            .bright_cyan()
+            .bright_white()
+            .bold()
         );
-        println!("{}", "导航: ↑↓ 逐行滚动 | ←→ 翻页 | Home/End 首页/末页 | r 刷新 | ESC/q 退出".bright_yellow());
-        println!("{}", "=".repeat(80).bright_blue());
+        println!("{}", "导航: ↑↓ 逐行滚动 | ←→ 翻页 | Home/End 首页/末页 | r 刷新 | ESC/q 退出".bright_black());
+        println!("{}", "=".repeat(80));
 
         Ok(())
     }
@@ -258,15 +273,16 @@ impl HexViewer {
     ) -> Result<()> {
         let mut i = 0;
 
-        // 文件头区域 (0-15) - 蓝色背景
+        // 文件头区域 (0-15) - 鲜明的紫色背景
         if offset < 16 {
             for &byte in data {
                 if i < 16 {
                     print!(
                         "{}",
                         format!("{:02X} ", byte)
-                            .on_blue()
-                            .black()
+                            .on_bright_magenta()
+                            .bright_white()
+                            .bold()
                     );
                     i += 1;
                 } else {
@@ -299,7 +315,7 @@ impl HexViewer {
                         .packet_length
                         as usize;
 
-                // 数据包头区域 (16字节) - 绿色背景
+                // 数据包头区域 (16字节) - 鲜明的青色背景
                 if current_offset >= packet_start
                     && current_offset < packet_header_end
                 {
@@ -315,8 +331,9 @@ impl HexViewer {
                         print!(
                             "{}",
                             format!("{:02X} ", byte)
-                                .on_green()
+                                .on_bright_cyan()
                                 .black()
+                                .bold()
                         );
                     }
 
@@ -324,7 +341,7 @@ impl HexViewer {
                     remaining_bytes -= bytes_to_show;
                     i += bytes_to_show;
                 }
-                // 数据包体区域 - 黄色背景
+                // 数据包体区域 - 鲜明的橙色背景
                 else if current_offset
                     >= packet_header_end
                     && current_offset < packet_data_end
@@ -346,8 +363,9 @@ impl HexViewer {
                         print!(
                             "{}",
                             format!("{:02X} ", byte)
-                                .on_yellow()
+                                .on_bright_yellow()
                                 .black()
+                                .bold()
                         );
                     }
 
@@ -416,30 +434,69 @@ impl HexViewer {
 
         // 如果是文件头的第一行，显示所有字段
         if offset == 0 {
-            if let Some(header) = self.parser.file_header()
-            {
-                print!(" MAGIC: 0x{:08X} VER: {}.{} TZ: {} TS_ACC: {}",
-                           header.magic_number, header.major_version, header.minor_version,
-                           header.timezone_offset, header.timestamp_accuracy);
-            } else {
-                // 如果解析器中没有文件头，则手动解析
-                let magic = u32::from_le_bytes([
-                    data[0], data[1], data[2], data[3],
-                ]);
-                let major_ver =
-                    u16::from_le_bytes([data[4], data[5]]);
-                let minor_ver =
-                    u16::from_le_bytes([data[6], data[7]]);
-                let tz_offset = u32::from_le_bytes([
-                    data[8], data[9], data[10], data[11],
-                ]);
-                let ts_accuracy = u32::from_le_bytes([
-                    data[12], data[13], data[14], data[15],
-                ]);
+            let header_values: PcapFileHeader =
+                if let Some(h) = self.parser.file_header() {
+                    h.clone()
+                } else {
+                    PcapFileHeader {
+                        magic_number: u32::from_le_bytes([
+                            data[0], data[1], data[2],
+                            data[3],
+                        ]),
+                        major_version: u16::from_le_bytes(
+                            [data[4], data[5]],
+                        ),
+                        minor_version: u16::from_le_bytes(
+                            [data[6], data[7]],
+                        ),
+                        timezone_offset: u32::from_le_bytes(
+                            [
+                                data[8], data[9], data[10],
+                                data[11],
+                            ],
+                        ),
+                        timestamp_accuracy:
+                            u32::from_le_bytes([
+                                data[12], data[13],
+                                data[14], data[15],
+                            ]),
+                    }
+                };
 
-                print!(" MAGIC: 0x{:08X} VER: {}.{} TZ: {} TS_ACC: {}",
-                           magic, major_ver, minor_ver, tz_offset, ts_accuracy);
-            }
+            let is_magic_invalid =
+                header_values.magic_number != 0xD4C3B2A1;
+            let is_version_invalid =
+                !(header_values.major_version == 2
+                    && header_values.minor_version == 4);
+
+            let magic_text = format!(
+                "0x{:08X}",
+                header_values.magic_number
+            );
+            let magic_out = if is_magic_invalid {
+                magic_text.bright_red().bold().to_string()
+            } else {
+                magic_text.bright_green().to_string()
+            };
+
+            let ver_text = format!(
+                "{}.{}",
+                header_values.major_version,
+                header_values.minor_version
+            );
+            let ver_out = if is_version_invalid {
+                ver_text.bright_red().bold().to_string()
+            } else {
+                ver_text.bright_green().to_string()
+            };
+
+            print!(
+                " MAGIC: {} VER: {} TZ: {} TS_ACC: {}",
+                magic_out,
+                ver_out,
+                header_values.timezone_offset,
+                header_values.timestamp_accuracy
+            );
         } else {
             // 其他情况显示原始数据
             self.display_raw_data(data);
@@ -461,16 +518,22 @@ impl HexViewer {
             // 数据包头区域 - 如果是包头的第一行，显示所有字段
             let header_offset = offset - packet_start;
             if data.len() >= 16 && header_offset == 0 {
+                let seconds = packet_info
+                    .packet
+                    .header
+                    .timestamp_seconds;
+                let nanoseconds = packet_info
+                    .packet
+                    .header
+                    .timestamp_nanoseconds;
+                let time_text = Self::format_packet_time(
+                    seconds,
+                    nanoseconds,
+                );
+
                 print!(
-                    " TS: {} NS: {} LEN: {} CRC: 0x{:08X}",
-                    packet_info
-                        .packet
-                        .header
-                        .timestamp_seconds,
-                    packet_info
-                        .packet
-                        .header
-                        .timestamp_nanoseconds,
+                    " TIME: {} LEN: {} CRC: 0x{:08X}",
+                    time_text,
                     packet_info.packet.header.packet_length,
                     packet_info.packet.header.checksum
                 );
@@ -482,6 +545,26 @@ impl HexViewer {
             // 数据包体区域不显示额外信息
         } else {
             self.display_raw_data(data);
+        }
+    }
+
+    /// 格式化数据包时间戳为 YYYY-MM-dd HH:mm:ss.ns
+    fn format_packet_time(
+        seconds: u32,
+        nanoseconds: u32,
+    ) -> String {
+        if let Some(dt) = DateTime::from_timestamp(
+            seconds as i64,
+            nanoseconds,
+        ) {
+            let base =
+                dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+            format!("{}.{:09}", base, nanoseconds)
+        } else {
+            format!(
+                "INVALID_TS({},{})",
+                seconds, nanoseconds
+            )
         }
     }
 

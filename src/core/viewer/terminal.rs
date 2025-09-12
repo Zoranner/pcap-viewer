@@ -4,7 +4,10 @@ use crate::app::error::types::Result;
 use crossterm::{
     cursor::{Hide, Show},
     execute,
-    terminal::{self, Clear, ClearType},
+    terminal::{
+        self, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use std::io;
 
@@ -23,7 +26,11 @@ impl TerminalManager {
     pub fn enter_raw_mode(&mut self) -> Result<()> {
         if !self.is_raw_mode {
             terminal::enable_raw_mode()?;
-            execute!(io::stdout(), Hide)?;
+            execute!(
+                io::stdout(),
+                EnterAlternateScreen,
+                Hide
+            )?;
             self.is_raw_mode = true;
         }
         Ok(())
@@ -32,8 +39,12 @@ impl TerminalManager {
     /// 退出原始模式
     pub fn exit_raw_mode(&mut self) -> Result<()> {
         if self.is_raw_mode {
+            execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                Show
+            )?;
             terminal::disable_raw_mode()?;
-            execute!(io::stdout(), Show)?;
             self.is_raw_mode = false;
         }
         Ok(())
