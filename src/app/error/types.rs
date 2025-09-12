@@ -7,12 +7,9 @@ use thiserror::Error;
 pub enum PcapViewerError {
     #[error("Invalid file format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
-    #[error("Parse error: {0}")]
-    ParseError(String),
 }
 
 /// 应用程序通用结果类型

@@ -1,32 +1,25 @@
 //! 十六进制查看器
 
 use colored::*;
-use crossterm::{
-    cursor::{Hide, Show},
-    event::{self, Event, KeyCode, KeyEvent},
-    execute,
-    terminal::{self, Clear, ClearType},
-};
-
-use std::io;
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 
 use crate::app::error::types::Result;
 use crate::cli::args::CliArgs;
-use crate::core::pcap::parser::{PcapParser, PacketInfo};
-use crate::core::viewer::display_utils;
+use crate::core::input::keyboard::KeyboardHandler;
+use crate::core::pcap::parser::{DataPacket, PcapParser};
+use crate::core::viewer::pagination::PaginationState;
+use crate::core::viewer::terminal::TerminalManager;
 
 /// 十六进制查看器
 pub struct HexViewer {
     parser: PcapParser,
     args: CliArgs,
-    bytes_per_line: usize,
     file_data: Vec<u8>,
-    // 分页相关字段
-    lines_per_page: usize, // 每页显示的行数 n
-    display_start_line: usize, // 显示窗口的起始行 i
-    last_key_time: std::time::Instant, // 上次按键时间，用于防抖
-    last_key_code: Option<KeyCode>,    // 上次按下的键
-    key_repeat_count: u32,             // 连续按键计数
+    // 模块化组件
+    terminal_manager: TerminalManager,
+    keyboard_handler: KeyboardHandler,
+    pagination: PaginationState,
+    // 状态管理
     last_display_start_line: usize, // 上次显示的起始行，用于检测是否需要重绘
 }
 
@@ -39,32 +32,34 @@ impl HexViewer {
         // 读取整个文件到内存
         let file_data = std::fs::read(&args.file_path)?;
 
-        // 获取终端尺寸
-        let (_, terminal_height) = terminal::size()
-            .map(|(w, h)| (w as usize, h as usize))
-            .unwrap_or((80, 24)); // 默认尺寸
+        // 创建组件
+        let terminal_manager = TerminalManager::new();
+        let keyboard_handler = KeyboardHandler::default();
 
-        // 计算分页信息 - 动态调整显示区域
+        // 计算分页信息
         let lines_per_page =
-            terminal_height.saturating_sub(6); // 减去帮助信息占用的行数
+            terminal_manager.calculate_display_lines(6); // 减去帮助信息占用的行数
+        let total_lines =
+            file_data.len().div_ceil(args.bytes_per_line());
+        let pagination = PaginationState::new(
+            lines_per_page,
+            total_lines,
+        );
 
         Ok(Self {
             parser,
-            args: args.clone(),
-            bytes_per_line: args.bytes_per_line,
+            args,
             file_data,
-            lines_per_page,
-            display_start_line: 0,
-            last_key_time: std::time::Instant::now(),
-            last_key_code: None,
-            key_repeat_count: 0,
+            terminal_manager,
+            keyboard_handler,
+            pagination,
             last_display_start_line: usize::MAX, // 初始值设为最大值，确保第一次显示
         })
     }
 
     /// 运行查看器
     pub fn run(&mut self) -> Result<()> {
-        if self.args.no_color {
+        if self.args.no_color() {
             colored::control::set_override(false);
         }
 
@@ -77,11 +72,10 @@ impl HexViewer {
     /// 交互模式
     fn interactive_mode(&mut self) -> Result<()> {
         // 启用原始模式
-        terminal::enable_raw_mode()?;
-        execute!(io::stdout(), Hide)?;
+        self.terminal_manager.enter_raw_mode()?;
 
         // 初始显示
-        execute!(io::stdout(), Clear(ClearType::All))?;
+        self.terminal_manager.clear_screen()?;
         let _ = self.update_terminal_size()?; // 忽略返回值，初始化时总是需要显示
         self.display_current_page()?;
         self.display_help()?;
@@ -93,19 +87,16 @@ impl HexViewer {
 
             // 检查是否需要重绘
             let needs_redraw = size_changed
-                || self.display_start_line
+                || self.pagination.display_start_line()
                     != self.last_display_start_line;
 
             if needs_redraw {
                 // 只有在需要时才重绘
-                execute!(
-                    io::stdout(),
-                    Clear(ClearType::All)
-                )?;
+                self.terminal_manager.clear_screen()?;
                 self.display_current_page()?;
                 self.display_help()?;
                 self.last_display_start_line =
-                    self.display_start_line;
+                    self.pagination.display_start_line();
             }
 
             // 等待用户输入
@@ -115,8 +106,11 @@ impl HexViewer {
                 ..
             }) = event::read()?
             {
-                // 改进的按键处理逻辑
-                if !self.should_process_key(&code) {
+                // 使用键盘处理器进行防抖
+                if !self
+                    .keyboard_handler
+                    .should_process_key(&code)
+                {
                     continue;
                 }
 
@@ -126,22 +120,22 @@ impl HexViewer {
                         break;
                     }
                     (KeyCode::Up, _) => {
-                        self.scroll_up();
+                        self.pagination.scroll_up();
                     }
                     (KeyCode::Down, _) => {
-                        self.scroll_down();
+                        self.pagination.scroll_down();
                     }
                     (KeyCode::Left, _) => {
-                        self.page_up();
+                        self.pagination.page_up();
                     }
                     (KeyCode::Right, _) => {
-                        self.page_down();
+                        self.pagination.page_down();
                     }
                     (KeyCode::Home, _) => {
-                        self.go_to_first_page();
+                        self.pagination.go_to_first_page();
                     }
                     (KeyCode::End, _) => {
-                        self.go_to_last_page();
+                        self.pagination.go_to_last_page();
                     }
                     (KeyCode::Char('r'), _) => {
                         // 刷新终端尺寸，强制重绘
@@ -155,66 +149,24 @@ impl HexViewer {
             }
         }
 
-        // 恢复终端
-        execute!(io::stdout(), Show)?;
-        terminal::disable_raw_mode()?;
+        // 恢复终端（由 TerminalManager 的 Drop trait 自动处理）
 
         Ok(())
     }
 
-    /// 判断是否应该处理按键（简化的防抖处理）
-    fn should_process_key(
-        &mut self,
-        code: &KeyCode,
-    ) -> bool {
-        let now = std::time::Instant::now();
-        let time_since_last = now.duration_since(self.last_key_time);
-
-        // 检查是否是同一个键
-        let is_same_key = self.last_key_code.as_ref() == Some(code);
-
-        // 简单的防抖逻辑：同一个键必须间隔至少150ms
-        if is_same_key && time_since_last < std::time::Duration::from_millis(150) {
-            return false;
-        }
-
-        // 更新状态
-        self.last_key_code = Some(*code);
-        self.last_key_time = now;
-        
-        // 重置计数器（保留字段以免破坏结构，但不使用复杂逻辑）
-        self.key_repeat_count = 0;
-        
-        true
-    }
-
     /// 更新终端尺寸
     fn update_terminal_size(&mut self) -> Result<bool> {
-        let (_, terminal_height) = terminal::size()
-            .map(|(w, h)| (w as usize, h as usize))
-            .unwrap_or((80, 24)); // 默认尺寸
-
         // 重新计算分页信息
-        let new_lines_per_page =
-            terminal_height.saturating_sub(6); // 减去帮助信息占用的行数
-
-        let size_changed =
-            new_lines_per_page != self.lines_per_page;
+        let new_lines_per_page = self
+            .terminal_manager
+            .calculate_display_lines(6);
+        let size_changed = new_lines_per_page
+            != self.pagination.lines_per_page();
 
         if size_changed {
             // 更新分页信息
-            self.lines_per_page = new_lines_per_page;
-
-            // 确保显示起始行不超出范围
-            let total_lines = self
-                .file_data
-                .len()
-                .div_ceil(self.bytes_per_line);
-            let max_start_line = total_lines
-                .saturating_sub(self.lines_per_page);
-            if self.display_start_line > max_start_line {
-                self.display_start_line = max_start_line;
-            }
+            self.pagination
+                .update_lines_per_page(new_lines_per_page);
         }
 
         Ok(size_changed)
@@ -224,7 +176,8 @@ impl HexViewer {
     fn display_current_page(&self) -> Result<()> {
         // 从显示起始行开始，绘制 n 行
         let start_offset =
-            self.display_start_line * self.bytes_per_line;
+            self.pagination.display_start_line()
+                * self.args.bytes_per_line();
 
         if start_offset >= self.file_data.len() {
             return Ok(());
@@ -233,14 +186,16 @@ impl HexViewer {
         let mut current_offset = start_offset;
         let mut lines_displayed = 0;
 
-        while lines_displayed < self.lines_per_page {
+        while lines_displayed
+            < self.pagination.lines_per_page()
+        {
             if current_offset >= self.file_data.len() {
                 break;
             }
 
             // 计算当前行的数据
             let line_end = std::cmp::min(
-                current_offset + self.bytes_per_line,
+                current_offset + self.args.bytes_per_line(),
                 self.file_data.len(),
             );
             let line_data =
@@ -273,15 +228,8 @@ impl HexViewer {
 
     /// 显示帮助信息
     fn display_help(&self) -> Result<()> {
-        let total_lines = self
-            .file_data
-            .len()
-            .div_ceil(self.bytes_per_line);
-        let current_page = self.display_start_line
-            / self.lines_per_page
-            + 1;
-        let total_pages =
-            total_lines.div_ceil(self.lines_per_page);
+        let current_page = self.pagination.current_page();
+        let total_pages = self.pagination.total_pages();
 
         println!();
         println!("{}", "=".repeat(80).bright_blue());
@@ -289,8 +237,8 @@ impl HexViewer {
             "{}",
             format!(
                 "第 {} 行 / 共 {} 行 (第 {} 页 / 共 {} 页)",
-                self.display_start_line + 1,
-                total_lines,
+                self.pagination.display_start_line() + 1,
+                self.pagination.total_lines(),
                 current_page,
                 total_pages
             )
@@ -300,67 +248,6 @@ impl HexViewer {
         println!("{}", "=".repeat(80).bright_blue());
 
         Ok(())
-    }
-
-    /// 向上滚动（逐行）
-    fn scroll_up(&mut self) {
-        if self.display_start_line > 0 {
-            self.display_start_line -= 1;
-        }
-    }
-
-    /// 向下滚动（逐行）
-    fn scroll_down(&mut self) {
-        let total_lines = self
-            .file_data
-            .len()
-            .div_ceil(self.bytes_per_line);
-        let max_start_line =
-            total_lines.saturating_sub(self.lines_per_page);
-        if self.display_start_line < max_start_line {
-            self.display_start_line += 1;
-        }
-    }
-
-    /// 上一页（跳转 n 行）
-    fn page_up(&mut self) {
-        if self.display_start_line >= self.lines_per_page {
-            self.display_start_line -= self.lines_per_page;
-        } else {
-            self.display_start_line = 0;
-        }
-    }
-
-    /// 下一页（跳转 n 行）
-    fn page_down(&mut self) {
-        let total_lines = self
-            .file_data
-            .len()
-            .div_ceil(self.bytes_per_line);
-        let max_start_line =
-            total_lines.saturating_sub(self.lines_per_page);
-        let new_start_line =
-            self.display_start_line + self.lines_per_page;
-        if new_start_line <= max_start_line {
-            self.display_start_line = new_start_line;
-        } else {
-            self.display_start_line = max_start_line;
-        }
-    }
-
-    /// 跳转到首页
-    fn go_to_first_page(&mut self) {
-        self.display_start_line = 0;
-    }
-
-    /// 跳转到末页
-    fn go_to_last_page(&mut self) {
-        let total_lines = self
-            .file_data
-            .len()
-            .div_ceil(self.bytes_per_line);
-        self.display_start_line =
-            total_lines.saturating_sub(self.lines_per_page);
     }
 
     /// 显示十六进制行数据（带颜色标记）
@@ -401,7 +288,7 @@ impl HexViewer {
         while remaining_bytes > 0 {
             // 查找当前偏移量对应的数据包
             if let Some(packet_info) =
-                self.parser.find_packet_at_offset(current_offset)
+                self.find_packet_at_offset(current_offset)
             {
                 let packet_start = packet_info.start;
                 let packet_header_end = packet_start + 16;
@@ -482,7 +369,7 @@ impl HexViewer {
         }
 
         // 填充剩余空间
-        while i < self.bytes_per_line {
+        while i < self.args.bytes_per_line() {
             print!("   ");
             i += 1;
         }
@@ -502,7 +389,7 @@ impl HexViewer {
         }
         // 数据包区域
         else if let Some(packet_info) =
-            self.parser.find_packet_at_offset(offset)
+            self.find_packet_at_offset(offset)
         {
             self.display_packet_info(
                 data,
@@ -536,9 +423,22 @@ impl HexViewer {
                            header.timezone_offset, header.timestamp_accuracy);
             } else {
                 // 如果解析器中没有文件头，则手动解析
-                if let Some(formatted) = display_utils::format_file_header_info(data) {
-                    print!("{}", formatted);
-                }
+                let magic = u32::from_le_bytes([
+                    data[0], data[1], data[2], data[3],
+                ]);
+                let major_ver =
+                    u16::from_le_bytes([data[4], data[5]]);
+                let minor_ver =
+                    u16::from_le_bytes([data[6], data[7]]);
+                let tz_offset = u32::from_le_bytes([
+                    data[8], data[9], data[10], data[11],
+                ]);
+                let ts_accuracy = u32::from_le_bytes([
+                    data[12], data[13], data[14], data[15],
+                ]);
+
+                print!(" MAGIC: 0x{:08X} VER: {}.{} TZ: {} TS_ACC: {}",
+                           magic, major_ver, minor_ver, tz_offset, ts_accuracy);
             }
         } else {
             // 其他情况显示原始数据
@@ -587,8 +487,47 @@ impl HexViewer {
 
     /// 显示原始数据
     fn display_raw_data(&self, data: &[u8]) {
-        let ascii_str = display_utils::display_raw_data_as_ascii(data);
-        print!("{}", ascii_str);
+        for &byte in data {
+            let ch = if (32..=126).contains(&byte) {
+                byte as char
+            } else {
+                '.'
+            };
+            print!("{}", ch);
+        }
     }
 
+    /// 查找指定偏移量对应的数据包信息
+    fn find_packet_at_offset(
+        &self,
+        offset: usize,
+    ) -> Option<PacketInfo> {
+        let mut current_offset = 16; // 跳过文件头
+
+        for packet in self.parser.packets() {
+            let packet_start = current_offset;
+            let packet_size =
+                16 + packet.header.packet_length as usize; // 头部 + 数据
+
+            if offset >= packet_start
+                && offset < packet_start + packet_size
+            {
+                return Some(PacketInfo {
+                    start: packet_start,
+                    packet: packet.clone(),
+                });
+            }
+
+            current_offset += packet_size;
+        }
+
+        None
+    }
+}
+
+/// 数据包信息
+#[derive(Debug, Clone)]
+struct PacketInfo {
+    start: usize,
+    packet: DataPacket,
 }

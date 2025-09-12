@@ -187,32 +187,4 @@ impl PcapParser {
     pub fn packets(&self) -> &[DataPacket] {
         &self.packets
     }
-
-    /// 查找指定偏移量对应的数据包信息
-    pub fn find_packet_at_offset(&self, offset: usize) -> Option<PacketInfo> {
-        let mut current_offset = 16; // 跳过文件头
-
-        for packet in self.packets() {
-            let packet_start = current_offset;
-            let packet_size = 16 + packet.header.packet_length as usize; // 头部 + 数据
-
-            if offset >= packet_start && offset < packet_start + packet_size {
-                return Some(PacketInfo {
-                    start: packet_start,
-                    packet: packet.clone(),
-                });
-            }
-
-            current_offset += packet_size;
-        }
-
-        None
-    }
-}
-
-/// 数据包信息
-#[derive(Debug, Clone)]
-pub struct PacketInfo {
-    pub start: usize,
-    pub packet: DataPacket,
 }

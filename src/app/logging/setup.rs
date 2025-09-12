@@ -1,6 +1,8 @@
 //! 日志系统初始化
 
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 /// 初始化日志系统
 pub fn init_logging() {
