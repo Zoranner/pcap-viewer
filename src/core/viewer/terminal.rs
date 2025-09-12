@@ -2,12 +2,8 @@
 
 use crate::app::error::types::Result;
 use crossterm::{
-    cursor::{Hide, MoveTo, Show},
-    execute,
-    terminal::{
-        self, Clear, ClearType, EnterAlternateScreen,
-        LeaveAlternateScreen,
-    },
+    cursor::{Hide, Show},
+    execute, terminal,
 };
 use std::io::{self, Write};
 
@@ -26,11 +22,8 @@ impl TerminalManager {
     pub fn enter_raw_mode(&mut self) -> Result<()> {
         if !self.is_raw_mode {
             terminal::enable_raw_mode()?;
-            execute!(
-                io::stdout(),
-                EnterAlternateScreen,
-                Hide
-            )?;
+            // 暂时不使用备用屏幕，直接隐藏光标
+            execute!(io::stdout(), Hide)?;
             self.is_raw_mode = true;
         }
         Ok(())
@@ -39,11 +32,7 @@ impl TerminalManager {
     /// 退出原始模式
     pub fn exit_raw_mode(&mut self) -> Result<()> {
         if self.is_raw_mode {
-            execute!(
-                io::stdout(),
-                LeaveAlternateScreen,
-                Show
-            )?;
+            execute!(io::stdout(), Show)?;
             terminal::disable_raw_mode()?;
             self.is_raw_mode = false;
         }
@@ -52,11 +41,8 @@ impl TerminalManager {
 
     /// 清空屏幕并将光标移动到左上角
     pub fn clear_screen(&self) -> Result<()> {
-        execute!(
-            io::stdout(),
-            Clear(ClearType::All),
-            MoveTo(0, 0)
-        )?;
+        // 使用简单的清屏方式
+        print!("\x1B[2J\x1B[H");
         io::stdout().flush()?;
         Ok(())
     }

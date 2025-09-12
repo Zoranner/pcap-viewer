@@ -242,7 +242,7 @@ impl HexViewer {
                 current_offset,
             ));
 
-            // 输出完整的一行（使用 \n 确保Linux兼容性）
+            // 输出完整的一行
             println!("{}", line_output);
 
             current_offset = line_end;
