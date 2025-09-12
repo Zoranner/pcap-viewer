@@ -220,23 +220,30 @@ impl HexViewer {
             let line_data =
                 &self.file_data[current_offset..line_end];
 
-            // 显示地址偏移
-            print!("{:08X}: ", current_offset);
+            // 构建完整的行输出
+            let mut line_output = String::new();
 
-            // 显示十六进制数据
-            self.display_hex_line(
+            // 添加地址偏移
+            line_output.push_str(&format!(
+                "{:08X}: ",
+                current_offset
+            ));
+
+            // 添加十六进制数据
+            line_output.push_str(&self.format_hex_line(
                 line_data,
                 current_offset,
-            )?;
+            )?);
 
-            // 显示解析信息
-            print!("|");
-            self.display_parsed_info(
+            // 添加解析信息分隔符和内容
+            line_output.push('|');
+            line_output.push_str(&self.format_parsed_info(
                 line_data,
                 current_offset,
-            );
+            ));
 
-            println!();
+            // 输出完整的一行（使用 \n 确保Linux兼容性）
+            println!("{}", line_output);
 
             current_offset = line_end;
             lines_displayed += 1;
@@ -274,25 +281,26 @@ impl HexViewer {
         Ok(())
     }
 
-    /// 显示十六进制行数据（带颜色标记）
-    fn display_hex_line(
+    /// 格式化十六进制行数据（带颜色标记）
+    fn format_hex_line(
         &self,
         data: &[u8],
         offset: usize,
-    ) -> Result<()> {
+    ) -> Result<String> {
+        let mut output = String::new();
         let mut i = 0;
 
         // 文件头区域 (0-15) - 鲜明的紫色背景
         if offset < 16 {
             for &byte in data {
                 if i < 16 {
-                    print!(
+                    output.push_str(&format!(
                         "{}",
                         format!("{:02X} ", byte)
                             .on_bright_magenta()
                             .bright_white()
                             .bold()
-                    );
+                    ));
                     i += 1;
                 } else {
                     break;
@@ -300,10 +308,10 @@ impl HexViewer {
             }
             // 填充剩余空间
             while i < 16 {
-                print!("   ");
+                output.push_str("   ");
                 i += 1;
             }
-            return Ok(());
+            return Ok(output);
         }
 
         // 数据包区域
@@ -337,13 +345,13 @@ impl HexViewer {
 
                     for j in 0..bytes_to_show {
                         let byte = data[i + j];
-                        print!(
+                        output.push_str(&format!(
                             "{}",
                             format!("{:02X} ", byte)
                                 .on_bright_cyan()
                                 .black()
                                 .bold()
-                        );
+                        ));
                     }
 
                     current_offset += bytes_to_show;
@@ -369,13 +377,13 @@ impl HexViewer {
 
                     for j in 0..bytes_to_show {
                         let byte = data[i + j];
-                        print!(
+                        output.push_str(&format!(
                             "{}",
                             format!("{:02X} ", byte)
                                 .on_bright_yellow()
                                 .black()
                                 .bold()
-                        );
+                        ));
                     }
 
                     current_offset += bytes_to_show;
@@ -389,7 +397,10 @@ impl HexViewer {
                 // 没有找到对应的数据包，显示原始数据
                 for j in 0..remaining_bytes {
                     let byte = data[i + j];
-                    print!("{:02X} ", byte);
+                    output.push_str(&format!(
+                        "{:02X} ",
+                        byte
+                    ));
                 }
                 break;
             }
@@ -397,48 +408,47 @@ impl HexViewer {
 
         // 填充剩余空间
         while i < self.args.bytes_per_line() {
-            print!("   ");
+            output.push_str("   ");
             i += 1;
         }
 
-        Ok(())
+        Ok(output)
     }
 
-    /// 显示解析信息
-    fn display_parsed_info(
+    /// 格式化解析信息
+    fn format_parsed_info(
         &self,
         data: &[u8],
         offset: usize,
-    ) {
+    ) -> String {
         // 文件头区域 (0-15)
         if offset < 16 {
-            self.display_file_header_info(data, offset);
+            self.format_file_header_info(data, offset)
         }
         // 数据包区域
         else if let Some(packet_info) =
             self.find_packet_at_offset(offset)
         {
-            self.display_packet_info(
+            self.format_packet_info(
                 data,
                 offset,
                 &packet_info,
-            );
+            )
         }
         // 其他区域
         else {
-            self.display_raw_data(data);
+            self.format_raw_data(data)
         }
     }
 
-    /// 显示文件头解析信息
-    fn display_file_header_info(
+    /// 格式化文件头解析信息
+    fn format_file_header_info(
         &self,
         data: &[u8],
         offset: usize,
-    ) {
+    ) -> String {
         if data.len() < 16 {
-            self.display_raw_data(data);
-            return;
+            return self.format_raw_data(data);
         }
 
         // 如果是文件头的第一行，显示所有字段
@@ -499,26 +509,26 @@ impl HexViewer {
                 ver_text.bright_green().to_string()
             };
 
-            print!(
+            format!(
                 " MAGIC: {} VER: {} TZ: {} TS_ACC: {}",
                 magic_out,
                 ver_out,
                 header_values.timezone_offset,
                 header_values.timestamp_accuracy
-            );
+            )
         } else {
             // 其他情况显示原始数据
-            self.display_raw_data(data);
+            self.format_raw_data(data)
         }
     }
 
-    /// 显示数据包解析信息
-    fn display_packet_info(
+    /// 格式化数据包解析信息
+    fn format_packet_info(
         &self,
         data: &[u8],
         offset: usize,
         packet_info: &PacketInfo,
-    ) {
+    ) -> String {
         let packet_start = packet_info.start;
         let header_end = packet_start + 16;
         let data_start = header_end;
@@ -540,20 +550,20 @@ impl HexViewer {
                     nanoseconds,
                 );
 
-                print!(
+                format!(
                     " TIME: {} LEN: {} CRC: 0x{:08X}",
                     time_text,
                     packet_info.packet.header.packet_length,
                     packet_info.packet.header.checksum
-                );
+                )
             } else {
-                self.display_raw_data(data);
+                self.format_raw_data(data)
             }
         } else if offset >= data_start {
-            // 数据包体区域 - 显示数据包信息
-            // 数据包体区域不显示额外信息
+            // 数据包体区域 - 数据包体区域不显示额外信息
+            String::new()
         } else {
-            self.display_raw_data(data);
+            self.format_raw_data(data)
         }
     }
 
@@ -577,16 +587,18 @@ impl HexViewer {
         }
     }
 
-    /// 显示原始数据
-    fn display_raw_data(&self, data: &[u8]) {
+    /// 格式化原始数据
+    fn format_raw_data(&self, data: &[u8]) -> String {
+        let mut output = String::new();
         for &byte in data {
             let ch = if (32..=126).contains(&byte) {
                 byte as char
             } else {
                 '.'
             };
-            print!("{}", ch);
+            output.push(ch);
         }
+        output
     }
 
     /// 查找指定偏移量对应的数据包信息
