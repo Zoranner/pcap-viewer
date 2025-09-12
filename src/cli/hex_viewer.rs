@@ -3,6 +3,7 @@
 use chrono::DateTime;
 use colored::*;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use std::io::{self, Write};
 
 use crate::app::error::types::Result;
 use crate::cli::args::CliArgs;
@@ -82,6 +83,8 @@ impl HexViewer {
         let _ = self.update_terminal_size()?; // 忽略返回值，初始化时总是需要显示
         self.display_current_page()?;
         self.display_help()?;
+        // 确保初始显示内容已刷新到终端
+        io::stdout().flush()?;
 
         loop {
             // 更新终端尺寸
@@ -98,6 +101,8 @@ impl HexViewer {
                 self.terminal_manager.clear_screen()?;
                 self.display_current_page()?;
                 self.display_help()?;
+                // 确保所有输出都已刷新到终端
+                io::stdout().flush()?;
                 self.last_display_start_line =
                     self.pagination.display_start_line();
             }
@@ -237,6 +242,8 @@ impl HexViewer {
             lines_displayed += 1;
         }
 
+        // 刷新输出缓冲区
+        io::stdout().flush()?;
         Ok(())
     }
 
@@ -262,6 +269,8 @@ impl HexViewer {
         println!("{}", "导航: ↑↓ 逐行滚动 | ←→ 翻页 | Home/End 首页/末页 | r 刷新 | ESC/q 退出".bright_black());
         println!("{}", "=".repeat(80));
 
+        // 刷新输出缓冲区
+        io::stdout().flush()?;
         Ok(())
     }
 

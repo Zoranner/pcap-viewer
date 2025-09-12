@@ -2,14 +2,14 @@
 
 use crate::app::error::types::Result;
 use crossterm::{
-    cursor::{Hide, Show},
+    cursor::{Hide, MoveTo, Show},
     execute,
     terminal::{
         self, Clear, ClearType, EnterAlternateScreen,
         LeaveAlternateScreen,
     },
 };
-use std::io;
+use std::io::{self, Write};
 
 /// 终端管理器
 pub struct TerminalManager {
@@ -50,9 +50,14 @@ impl TerminalManager {
         Ok(())
     }
 
-    /// 清空屏幕
+    /// 清空屏幕并将光标移动到左上角
     pub fn clear_screen(&self) -> Result<()> {
-        execute!(io::stdout(), Clear(ClearType::All))?;
+        execute!(
+            io::stdout(),
+            Clear(ClearType::All),
+            MoveTo(0, 0)
+        )?;
+        io::stdout().flush()?;
         Ok(())
     }
 
