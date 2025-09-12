@@ -12,7 +12,8 @@ use std::io;
 
 use crate::app::error::types::Result;
 use crate::cli::args::CliArgs;
-use crate::cli::pcap_parser::{DataPacket, PcapParser};
+use crate::core::pcap::parser::{PcapParser, PacketInfo};
+use crate::core::viewer::display_utils;
 
 /// 十六进制查看器
 pub struct HexViewer {
@@ -400,7 +401,7 @@ impl HexViewer {
         while remaining_bytes > 0 {
             // 查找当前偏移量对应的数据包
             if let Some(packet_info) =
-                self.find_packet_at_offset(current_offset)
+                self.parser.find_packet_at_offset(current_offset)
             {
                 let packet_start = packet_info.start;
                 let packet_header_end = packet_start + 16;
@@ -501,7 +502,7 @@ impl HexViewer {
         }
         // 数据包区域
         else if let Some(packet_info) =
-            self.find_packet_at_offset(offset)
+            self.parser.find_packet_at_offset(offset)
         {
             self.display_packet_info(
                 data,
@@ -535,22 +536,9 @@ impl HexViewer {
                            header.timezone_offset, header.timestamp_accuracy);
             } else {
                 // 如果解析器中没有文件头，则手动解析
-                let magic = u32::from_le_bytes([
-                    data[0], data[1], data[2], data[3],
-                ]);
-                let major_ver =
-                    u16::from_le_bytes([data[4], data[5]]);
-                let minor_ver =
-                    u16::from_le_bytes([data[6], data[7]]);
-                let tz_offset = u32::from_le_bytes([
-                    data[8], data[9], data[10], data[11],
-                ]);
-                let ts_accuracy = u32::from_le_bytes([
-                    data[12], data[13], data[14], data[15],
-                ]);
-
-                print!(" MAGIC: 0x{:08X} VER: {}.{} TZ: {} TS_ACC: {}",
-                           magic, major_ver, minor_ver, tz_offset, ts_accuracy);
+                if let Some(formatted) = display_utils::format_file_header_info(data) {
+                    print!("{}", formatted);
+                }
             }
         } else {
             // 其他情况显示原始数据
@@ -599,47 +587,8 @@ impl HexViewer {
 
     /// 显示原始数据
     fn display_raw_data(&self, data: &[u8]) {
-        for &byte in data {
-            let ch = if (32..=126).contains(&byte) {
-                byte as char
-            } else {
-                '.'
-            };
-            print!("{}", ch);
-        }
+        let ascii_str = display_utils::display_raw_data_as_ascii(data);
+        print!("{}", ascii_str);
     }
 
-    /// 查找指定偏移量对应的数据包信息
-    fn find_packet_at_offset(
-        &self,
-        offset: usize,
-    ) -> Option<PacketInfo> {
-        let mut current_offset = 16; // 跳过文件头
-
-        for packet in self.parser.packets() {
-            let packet_start = current_offset;
-            let packet_size =
-                16 + packet.header.packet_length as usize; // 头部 + 数据
-
-            if offset >= packet_start
-                && offset < packet_start + packet_size
-            {
-                return Some(PacketInfo {
-                    start: packet_start,
-                    packet: packet.clone(),
-                });
-            }
-
-            current_offset += packet_size;
-        }
-
-        None
-    }
-}
-
-/// 数据包信息
-#[derive(Debug, Clone)]
-struct PacketInfo {
-    start: usize,
-    packet: DataPacket,
 }

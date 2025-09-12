@@ -2,7 +2,6 @@
 
 pub mod args;
 pub mod hex_viewer;
-pub mod pcap_parser;
 
 use clap::Parser;
 use colored::*;
@@ -11,7 +10,7 @@ use crate::app::error::types::Result;
 
 use self::args::CliArgs;
 use self::hex_viewer::HexViewer;
-use self::pcap_parser::PcapParser;
+use crate::core::pcap::parser::PcapParser;
 
 /// 运行命令行界面
 pub fn run_cli() -> Result<()> {

@@ -2,6 +2,7 @@
 
 mod app;
 mod cli;
+mod core;
 
 use app::error::types::Result;
 use app::logging::setup::init_logging;
