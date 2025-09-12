@@ -242,8 +242,8 @@ impl HexViewer {
                 current_offset,
             ));
 
-            // 输出完整的一行
-            println!("{}", line_output);
+            // 输出完整的一行（在原始模式下使用显式的\r\n）
+            print!("{}\r\n", line_output);
 
             current_offset = line_end;
             lines_displayed += 1;
@@ -259,10 +259,10 @@ impl HexViewer {
         let current_page = self.pagination.current_page();
         let total_pages = self.pagination.total_pages();
 
-        println!();
-        println!("{}", "=".repeat(80));
-        println!(
-            "{}",
+        print!("\r\n");
+        print!("{}\r\n", "=".repeat(80));
+        print!(
+            "{}\r\n",
             format!(
                 "第 {} 行 / 共 {} 行 (第 {} 页 / 共 {} 页)",
                 self.pagination.display_start_line() + 1,
@@ -273,8 +273,8 @@ impl HexViewer {
             .bright_white()
             .bold()
         );
-        println!("{}", "导航: ↑↓ 逐行滚动 | ←→ 翻页 | Home/End 首页/末页 | r 刷新 | ESC/q 退出".bright_black());
-        println!("{}", "=".repeat(80));
+        print!("{}\r\n", "导航: ↑↓ 逐行滚动 | ←→ 翻页 | Home/End 首页/末页 | r 刷新 | ESC/q 退出".bright_black());
+        print!("{}\r\n", "=".repeat(80));
 
         // 刷新输出缓冲区
         io::stdout().flush()?;
