@@ -161,50 +161,29 @@ impl HexViewer {
         Ok(())
     }
 
-    /// 判断是否应该处理按键（防抖和长按检测）
+    /// 判断是否应该处理按键（简化的防抖处理）
     fn should_process_key(
         &mut self,
         code: &KeyCode,
     ) -> bool {
         let now = std::time::Instant::now();
-        let time_since_last =
-            now.duration_since(self.last_key_time);
+        let time_since_last = now.duration_since(self.last_key_time);
 
         // 检查是否是同一个键
-        let is_same_key =
-            self.last_key_code.as_ref() == Some(code);
+        let is_same_key = self.last_key_code.as_ref() == Some(code);
 
-        if is_same_key {
-            // 同一个键的处理
-            if time_since_last
-                < std::time::Duration::from_millis(100)
-            {
-                // 太快，可能是长按，增加计数
-                self.key_repeat_count += 1;
-
-                // 如果连续按键次数超过阈值，认为是长按，跳过
-                if self.key_repeat_count > 3 {
-                    return false;
-                }
-            } else {
-                // 时间间隔足够，重置计数
-                self.key_repeat_count = 1;
-            }
-        } else {
-            // 不同的键，重置状态
-            self.key_repeat_count = 1;
-            self.last_key_code = Some(*code);
-        }
-
-        // 基本防抖：至少间隔80ms
-        if time_since_last
-            < std::time::Duration::from_millis(80)
-            && is_same_key
-        {
+        // 简单的防抖逻辑：同一个键必须间隔至少150ms
+        if is_same_key && time_since_last < std::time::Duration::from_millis(150) {
             return false;
         }
 
+        // 更新状态
+        self.last_key_code = Some(*code);
         self.last_key_time = now;
+        
+        // 重置计数器（保留字段以免破坏结构，但不使用复杂逻辑）
+        self.key_repeat_count = 0;
+        
         true
     }
 
