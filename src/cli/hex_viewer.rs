@@ -358,6 +358,52 @@ impl HexViewer {
                     remaining_bytes -= bytes_to_show;
                     i += bytes_to_show;
                 }
+                // 处理跨行的数据包头开始情况
+                else if packet_start >= current_offset
+                    && packet_start
+                        < current_offset + remaining_bytes
+                {
+                    // 先显示数据包开始前的数据（这些属于前一个数据包的数据部分，应该是黄色）
+                    let bytes_before_packet =
+                        packet_start - current_offset;
+                    for j in 0..bytes_before_packet {
+                        let byte = data[i + j];
+                        output.push_str(&format!(
+                            "{}",
+                            format!("{:02X} ", byte)
+                                .on_bright_yellow()
+                                .black()
+                                .bold()
+                        ));
+                    }
+
+                    // 然后显示数据包头部分（青色背景）
+                    let header_bytes_in_line =
+                        std::cmp::min(
+                            16, // 数据包头最多16字节
+                            remaining_bytes
+                                - bytes_before_packet,
+                        );
+
+                    for j in 0..header_bytes_in_line {
+                        let byte = data
+                            [i + bytes_before_packet + j];
+                        output.push_str(&format!(
+                            "{}",
+                            format!("{:02X} ", byte)
+                                .on_bright_cyan()
+                                .black()
+                                .bold()
+                        ));
+                    }
+
+                    current_offset += bytes_before_packet
+                        + header_bytes_in_line;
+                    remaining_bytes -= bytes_before_packet
+                        + header_bytes_in_line;
+                    i += bytes_before_packet
+                        + header_bytes_in_line;
+                }
                 // 数据包体区域 - 鲜明的橙色背景
                 else if current_offset
                     >= packet_header_end
@@ -533,10 +579,23 @@ impl HexViewer {
         let header_end = packet_start + 16;
         let data_start = header_end;
 
-        if offset >= packet_start && offset < header_end {
-            // 数据包头区域 - 如果是包头的第一行，显示所有字段
-            let header_offset = offset - packet_start;
-            if data.len() >= 16 && header_offset == 0 {
+        // 检查当前行是否与数据包头区域有重叠
+        let line_end = offset + data.len();
+        if (offset >= packet_start && offset < header_end)
+            || (packet_start >= offset
+                && packet_start < line_end)
+        {
+            // 数据包头区域 - 检查当前行是否包含数据包头的开始部分
+            let line_end = offset + data.len();
+
+            // 判断当前行在数据包头中的位置
+            let header_offset_start =
+                offset.saturating_sub(packet_start);
+
+            // 如果当前行包含时间戳的开始位置（前8字节），显示完整的时间戳信息
+            if packet_start >= offset
+                && packet_start < line_end
+            {
                 let seconds = packet_info
                     .packet
                     .header
@@ -556,6 +615,11 @@ impl HexViewer {
                     packet_info.packet.header.packet_length,
                     packet_info.packet.header.checksum
                 )
+            }
+            // 如果当前行包含数据包头的后半部分（长度和校验和），不显示额外信息
+            else if (8..16).contains(&header_offset_start)
+            {
+                String::new()
             } else {
                 self.format_raw_data(data)
             }
@@ -608,13 +672,23 @@ impl HexViewer {
     ) -> Option<PacketInfo> {
         let mut current_offset = 16; // 跳过文件头
 
+        let mut best_match: Option<PacketInfo> = None;
+
         for packet in self.parser.packets() {
             let packet_start = current_offset;
-            let packet_size =
-                16 + packet.header.packet_length as usize; // 头部 + 数据
+            let packet_header_size = 16; // 数据包头部固定16字节
+            let packet_data_size =
+                packet.header.packet_length as usize; // 数据包数据长度
+            let packet_total_size =
+                packet_header_size + packet_data_size; // 总大小
+            let packet_end =
+                packet_start + packet_total_size;
 
-            if offset >= packet_start
-                && offset < packet_start + packet_size
+            let line_end = offset + 16; // 假设每行16字节
+
+            // 优先级1：如果当前行包含数据包开始位置，立即返回
+            if packet_start >= offset
+                && packet_start < line_end
             {
                 return Some(PacketInfo {
                     start: packet_start,
@@ -622,10 +696,21 @@ impl HexViewer {
                 });
             }
 
-            current_offset += packet_size;
+            // 优先级2：如果当前偏移量在数据包范围内，记录为候选
+            if offset >= packet_start
+                && offset < packet_end
+                && best_match.is_none()
+            {
+                best_match = Some(PacketInfo {
+                    start: packet_start,
+                    packet: packet.clone(),
+                });
+            }
+
+            current_offset += packet_total_size;
         }
 
-        None
+        best_match
     }
 }
 
