@@ -6,9 +6,6 @@ authors = ["KimoTech"]
 description = "PCAP文件十六进制查看器"
 
 [dependencies]
-# 数据包读写
-pcapfile-io = { version = "0.1.0" }
-
 # 时间处理
 chrono = { version = "0.4", features = ["serde"] }
 
