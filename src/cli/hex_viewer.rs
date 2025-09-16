@@ -288,174 +288,52 @@ impl HexViewer {
         offset: usize,
     ) -> Result<String> {
         let mut output = String::new();
-        let mut i = 0;
 
-        // 文件头区域 (0-15) - 鲜明的紫色背景
-        if offset < 16 {
-            for &byte in data {
-                if i < 16 {
-                    output.push_str(&format!(
-                        "{}",
+        // 简化逻辑：直接按字节顺序显示，根据位置应用颜色
+        for i in 0..self.args.bytes_per_line() {
+            if i < data.len() {
+                let byte = data[i];
+                let current_offset = offset + i;
+
+                // 根据字节位置确定颜色
+                let color_type = self
+                    .get_byte_color_type(current_offset);
+                let formatted_byte = match color_type {
+                    ByteColorType::FileHeader => {
+                        // 文件头区域 - 紫色背景
                         format!("{:02X} ", byte)
                             .on_bright_magenta()
                             .bright_white()
                             .bold()
-                    ));
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            // 填充剩余空间
-            while i < 16 {
-                output.push_str("   ");
-                i += 1;
-            }
-            return Ok(output);
-        }
-
-        // 数据包区域
-        let mut current_offset = offset;
-        let mut remaining_bytes = data.len();
-
-        while remaining_bytes > 0 {
-            // 查找当前偏移量对应的数据包
-            if let Some(packet_info) =
-                self.find_packet_at_offset(current_offset)
-            {
-                let packet_start = packet_info.start;
-                let packet_header_end = packet_start + 16;
-                let packet_data_end = packet_header_end
-                    + packet_info
-                        .packet
-                        .header
-                        .packet_length
-                        as usize;
-
-                // 数据包头区域 (16字节) - 鲜明的青色背景
-                if current_offset >= packet_start
-                    && current_offset < packet_header_end
-                {
-                    let header_offset =
-                        current_offset - packet_start;
-                    let bytes_to_show = std::cmp::min(
-                        16 - header_offset,
-                        remaining_bytes,
-                    );
-
-                    for j in 0..bytes_to_show {
-                        let byte = data[i + j];
-                        output.push_str(&format!(
-                            "{}",
-                            format!("{:02X} ", byte)
-                                .on_bright_cyan()
-                                .black()
-                                .bold()
-                        ));
+                            .to_string()
                     }
-
-                    current_offset += bytes_to_show;
-                    remaining_bytes -= bytes_to_show;
-                    i += bytes_to_show;
-                }
-                // 处理跨行的数据包头开始情况
-                else if packet_start >= current_offset
-                    && packet_start
-                        < current_offset + remaining_bytes
-                {
-                    // 先显示数据包开始前的数据（这些属于前一个数据包的数据部分，应该是黄色）
-                    let bytes_before_packet =
-                        packet_start - current_offset;
-                    for j in 0..bytes_before_packet {
-                        let byte = data[i + j];
-                        output.push_str(&format!(
-                            "{}",
-                            format!("{:02X} ", byte)
-                                .on_bright_yellow()
-                                .black()
-                                .bold()
-                        ));
+                    ByteColorType::PacketHeader => {
+                        // 数据包头区域 - 青色背景
+                        format!("{:02X} ", byte)
+                            .on_bright_cyan()
+                            .black()
+                            .bold()
+                            .to_string()
                     }
-
-                    // 然后显示数据包头部分（青色背景）
-                    let header_bytes_in_line =
-                        std::cmp::min(
-                            16, // 数据包头最多16字节
-                            remaining_bytes
-                                - bytes_before_packet,
-                        );
-
-                    for j in 0..header_bytes_in_line {
-                        let byte = data
-                            [i + bytes_before_packet + j];
-                        output.push_str(&format!(
-                            "{}",
-                            format!("{:02X} ", byte)
-                                .on_bright_cyan()
-                                .black()
-                                .bold()
-                        ));
+                    ByteColorType::PacketData => {
+                        // 数据包体区域 - 黄色背景
+                        format!("{:02X} ", byte)
+                            .on_bright_yellow()
+                            .black()
+                            .bold()
+                            .to_string()
                     }
-
-                    current_offset += bytes_before_packet
-                        + header_bytes_in_line;
-                    remaining_bytes -= bytes_before_packet
-                        + header_bytes_in_line;
-                    i += bytes_before_packet
-                        + header_bytes_in_line;
-                }
-                // 数据包体区域 - 鲜明的橙色背景
-                else if current_offset
-                    >= packet_header_end
-                    && current_offset < packet_data_end
-                {
-                    let data_offset =
-                        current_offset - packet_header_end;
-                    let bytes_to_show = std::cmp::min(
-                        packet_info
-                            .packet
-                            .header
-                            .packet_length
-                            as usize
-                            - data_offset,
-                        remaining_bytes,
-                    );
-
-                    for j in 0..bytes_to_show {
-                        let byte = data[i + j];
-                        output.push_str(&format!(
-                            "{}",
-                            format!("{:02X} ", byte)
-                                .on_bright_yellow()
-                                .black()
-                                .bold()
-                        ));
+                    ByteColorType::Unknown => {
+                        // 未知区域 - 无颜色
+                        format!("{:02X} ", byte)
                     }
+                };
 
-                    current_offset += bytes_to_show;
-                    remaining_bytes -= bytes_to_show;
-                    i += bytes_to_show;
-                } else {
-                    // 跳过到下一个数据包
-                    current_offset = packet_data_end;
-                }
+                output.push_str(&formatted_byte);
             } else {
-                // 没有找到对应的数据包，显示原始数据
-                for j in 0..remaining_bytes {
-                    let byte = data[i + j];
-                    output.push_str(&format!(
-                        "{:02X} ",
-                        byte
-                    ));
-                }
-                break;
+                // 填充空白
+                output.push_str("   ");
             }
-        }
-
-        // 填充剩余空间
-        while i < self.args.bytes_per_line() {
-            output.push_str("   ");
-            i += 1;
         }
 
         Ok(output)
@@ -473,7 +351,7 @@ impl HexViewer {
         }
         // 数据包区域
         else if let Some(packet_info) =
-            self.find_packet_at_offset(offset)
+            self.find_packet_header_in_line(offset)
         {
             self.format_packet_info(
                 data,
@@ -481,9 +359,9 @@ impl HexViewer {
                 &packet_info,
             )
         }
-        // 其他区域
+        // 其他区域 - 解析失败时不显示原始数据
         else {
-            self.format_raw_data(data)
+            String::new()
         }
     }
 
@@ -563,8 +441,8 @@ impl HexViewer {
                 header_values.timestamp_accuracy
             )
         } else {
-            // 其他情况显示原始数据
-            self.format_raw_data(data)
+            // 其他情况不显示任何内容
+            String::new()
         }
     }
 
@@ -588,10 +466,6 @@ impl HexViewer {
             // 数据包头区域 - 检查当前行是否包含数据包头的开始部分
             let line_end = offset + data.len();
 
-            // 判断当前行在数据包头中的位置
-            let header_offset_start =
-                offset.saturating_sub(packet_start);
-
             // 如果当前行包含时间戳的开始位置（前8字节），显示完整的时间戳信息
             if packet_start >= offset
                 && packet_start < line_end
@@ -604,50 +478,69 @@ impl HexViewer {
                     .packet
                     .header
                     .timestamp_nanoseconds;
-                let time_text = Self::format_packet_time(
-                    seconds,
-                    nanoseconds,
-                );
+                let (time_text, is_time_valid) =
+                    Self::format_packet_time(
+                        seconds,
+                        nanoseconds,
+                    );
+
+                // 统一在这里处理所有颜色
+                let colored_time = if is_time_valid {
+                    time_text.bright_green().to_string()
+                } else {
+                    time_text
+                        .bright_red()
+                        .bold()
+                        .to_string()
+                };
+
+                // 数据包长度通常都是有效的，显示为绿色
+                let colored_len = format!(
+                    "{}",
+                    packet_info.packet.header.packet_length
+                )
+                .bright_green()
+                .to_string();
 
                 format!(
                     " TIME: {} LEN: {} CRC: 0x{:08X}",
-                    time_text,
-                    packet_info.packet.header.packet_length,
+                    colored_time,
+                    colored_len,
                     packet_info.packet.header.checksum
                 )
             }
             // 如果当前行包含数据包头的后半部分（长度和校验和），不显示额外信息
-            else if (8..16).contains(&header_offset_start)
-            {
+            else {
                 String::new()
-            } else {
-                self.format_raw_data(data)
             }
         } else if offset >= data_start {
             // 数据包体区域 - 数据包体区域不显示额外信息
             String::new()
         } else {
-            self.format_raw_data(data)
+            String::new()
         }
     }
 
-    /// 格式化数据包时间戳为 YYYY-MM-dd HH:mm:ss.ns
+    /// 格式化数据包时间戳为 YYYY-MM-dd HH:mm:ss.ns，返回(时间字符串, 是否有效)
     fn format_packet_time(
         seconds: u32,
         nanoseconds: u32,
-    ) -> String {
+    ) -> (String, bool) {
         if let Some(dt) = DateTime::from_timestamp(
             seconds as i64,
             nanoseconds,
         ) {
             let base =
                 dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-            format!("{}.{:09}", base, nanoseconds)
+            let time_str =
+                format!("{}.{:09}", base, nanoseconds);
+            (time_str, true) // 有效时间戳
         } else {
-            format!(
+            let time_str = format!(
                 "INVALID_TS({},{})",
                 seconds, nanoseconds
-            )
+            );
+            (time_str, false) // 无效时间戳
         }
     }
 
@@ -665,29 +558,24 @@ impl HexViewer {
         output
     }
 
-    /// 查找指定偏移量对应的数据包信息
-    fn find_packet_at_offset(
+    /// 查找指定行是否包含数据包头开始位置（用于时间戳显示）
+    fn find_packet_header_in_line(
         &self,
-        offset: usize,
+        line_offset: usize,
     ) -> Option<PacketInfo> {
         let mut current_offset = 16; // 跳过文件头
-
-        let mut best_match: Option<PacketInfo> = None;
+        let line_end = line_offset + 16; // 当前行结束位置
 
         for packet in self.parser.packets() {
             let packet_start = current_offset;
-            let packet_header_size = 16; // 数据包头部固定16字节
+            let packet_header_size = 16;
             let packet_data_size =
-                packet.header.packet_length as usize; // 数据包数据长度
+                packet.header.packet_length as usize;
             let packet_total_size =
-                packet_header_size + packet_data_size; // 总大小
-            let packet_end =
-                packet_start + packet_total_size;
+                packet_header_size + packet_data_size;
 
-            let line_end = offset + 16; // 假设每行16字节
-
-            // 优先级1：如果当前行包含数据包开始位置，立即返回
-            if packet_start >= offset
+            // 检查数据包头是否在当前行内
+            if packet_start >= line_offset
                 && packet_start < line_end
             {
                 return Some(PacketInfo {
@@ -696,21 +584,44 @@ impl HexViewer {
                 });
             }
 
-            // 优先级2：如果当前偏移量在数据包范围内，记录为候选
-            if offset >= packet_start
-                && offset < packet_end
-                && best_match.is_none()
-            {
-                best_match = Some(PacketInfo {
-                    start: packet_start,
-                    packet: packet.clone(),
-                });
-            }
-
             current_offset += packet_total_size;
         }
 
-        best_match
+        None
+    }
+
+    /// 获取指定字节位置的颜色类型（用于颜色标记）
+    fn get_byte_color_type(
+        &self,
+        byte_offset: usize,
+    ) -> ByteColorType {
+        // 文件头区域
+        if byte_offset < 16 {
+            return ByteColorType::FileHeader;
+        }
+
+        let mut current_offset = 16; // 跳过文件头
+
+        for packet in self.parser.packets() {
+            let packet_start = current_offset;
+            let packet_header_end = packet_start + 16;
+            let packet_data_end = packet_header_end
+                + packet.header.packet_length as usize;
+
+            if byte_offset >= packet_start
+                && byte_offset < packet_header_end
+            {
+                return ByteColorType::PacketHeader;
+            } else if byte_offset >= packet_header_end
+                && byte_offset < packet_data_end
+            {
+                return ByteColorType::PacketData;
+            }
+
+            current_offset = packet_data_end;
+        }
+
+        ByteColorType::Unknown
     }
 }
 
@@ -719,4 +630,13 @@ impl HexViewer {
 struct PacketInfo {
     start: usize,
     packet: DataPacket,
+}
+
+/// 字节颜色类型
+#[derive(Debug, Clone, PartialEq)]
+enum ByteColorType {
+    FileHeader,   // 文件头 - 紫色
+    PacketHeader, // 数据包头 - 青色
+    PacketData,   // 数据包数据 - 黄色
+    Unknown,      // 未知区域 - 无颜色
 }
